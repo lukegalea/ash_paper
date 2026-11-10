@@ -1,0 +1,9 @@
+/_build/
+/deps/
+/.mix/
+/.hex/
+/.cache/
+/.home/
+/.host-path
+erl_crash.dump
+bin/dx

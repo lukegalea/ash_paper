@@ -1,0 +1,5 @@
+lib/ash_paper/pdf/reader.ex is derived from another MIT-licensed project by the same author
+(Copyright (c) 2026 Luke Galea), renamed only. The licence in LICENSE applies to it.
+
+The fonts in priv/fonts are Carlito, Caladea (Google Crosextra) and Liberation 2.x, under the SIL Open
+Font License 1.1. Their copyright files sit beside them (*.copyright).
