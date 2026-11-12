@@ -155,6 +155,111 @@ defmodule AshPaper.KernelTest do
       assert {:error, problems} = Theme.new(%{key: "a"})
       assert {:missing_token, :accent} in problems
     end
+
+    test "optional look tokens are validated, and paragraph spacing needs line spacing" do
+      assert {:ok, %Theme{line_spacing: 1.4, table_header_fill: "#dcebec"}} =
+               Theme.new(Map.merge(base_tokens(), look_tokens()))
+
+      assert {:error, problems} =
+               Theme.new(
+                 Map.merge(base_tokens(), %{
+                   text_color: "black",
+                   heading_size: 99,
+                   line_spacing: 3,
+                   title_rule: -1,
+                   table_stroke: "#12345"
+                 })
+               )
+
+      for token <- [:text_color, :heading_size, :line_spacing, :title_rule, :table_stroke],
+          do: assert({:invalid_token, token} in problems)
+
+      assert {:error, [{:requires_token, :paragraph_spacing, :line_spacing}]} =
+               Theme.new(Map.put(base_tokens(), :paragraph_spacing, 8))
+    end
+
+    test "a theme without optional tokens hashes as it did before they existed" do
+      assert Theme.new(Map.put(base_tokens(), :text_color, nil)) == Theme.new(base_tokens())
+      refute Map.has_key?(Theme.tokens(theme()), :text_color)
+
+      # Theme.hash(theme()) on the kernel before the optional tokens (5ab3222).
+      assert Theme.hash(theme()) ==
+               "fa82fea2c6677ea4c0156a563cf6376d3f536724730acf2ebecf74f2e39e34d6"
+    end
+
+    test "a fully themed render reads back, and line spacing is baseline to baseline" do
+      {:ok, looked} = Theme.new(Map.merge(base_tokens(), look_tokens()))
+
+      clause = %Clause{
+        key: "renewal",
+        locale: :en,
+        version: 1,
+        runs: [{:text, String.duplicate("Either party may decline by written notice. ", 12)}]
+      }
+
+      p = payload()
+      {:ok, resolved} = Clause.resolve([clause], ["renewal"], p)
+      {:ok, r} = render(p, looked, resolved)
+      assert AshPaper.Verify.read_back(r.bytes, r.marks, p, resolved, looked).status == :passed
+
+      s = payload(SummarySchema, summary(8))
+      {:ok, table} = render(s, looked)
+      assert AshPaper.Verify.read_back(table.bytes, table.marks, s, [], looked).status == :passed
+
+      [start, stop] =
+        for edge <- ["start", "end"],
+            do:
+              Enum.find(
+                r.marks,
+                &(&1["value"] == %{"kind" => "clause", "key" => "renewal", "edge" => edge})
+              )
+
+      {:ok, runs, _heights} = AshPaper.Pdf.Text.runs(r.bytes)
+
+      tops =
+        for run <- runs,
+            run.page == start["page"],
+            run.top >= start["y"] - 3 and run.top <= stop["y"] + 0.5,
+            uniq: true,
+            do: Float.round(run.top * 1.0, 2)
+
+      pitches =
+        tops
+        |> Enum.sort()
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.map(fn [a, b] -> b - a end)
+
+      assert length(pitches) >= 2
+      for pitch <- pitches, do: assert_in_delta(pitch, 1.4 * 11, 0.05)
+    end
+  end
+
+  defp base_tokens do
+    %{
+      key: "a",
+      version: 1,
+      body_font: "Carlito",
+      heading_font: "Caladea",
+      body_size: 11,
+      margin_x: 65,
+      margin_y: 54,
+      paper: "us-letter",
+      accent: "#0b5563"
+    }
+  end
+
+  defp look_tokens do
+    %{
+      text_color: "#222222",
+      muted_color: "#6b7280",
+      heading_size: 16,
+      line_spacing: 1.4,
+      paragraph_spacing: 8,
+      title_rule: 1.5,
+      table_stroke: "#9fb8bb",
+      table_header_fill: "#dcebec",
+      table_header_text: "#0b5563"
+    }
   end
 
   describe "clauses" do
