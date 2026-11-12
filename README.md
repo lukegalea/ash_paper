@@ -13,7 +13,10 @@ The stored bytes are the record. A render is pure given its pins, so the same in
 
 - **Schema**: a Spark DSL naming the read paths a document may use (`field`, `table`). Verified against the source resource.
 - **Layout**: host-owned Typst source. It is linted and locked by hash.
-- **Theme**: typed tokens (fonts, colours, sizes). Never Typst.
+- **Theme**: typed tokens (fonts, colours, sizes). Never Typst. Optional look tokens (text and muted colours,
+  heading size, baseline-to-baseline line spacing, paragraph spacing, a title rule, table rules and header) let
+  a theme be hand-authored from measurements of a real document; a theme that sets none of them hashes and lays
+  out exactly as before. See `AshPaper.Theme`.
 - **Clause**: wording as literal runs plus typed holes, per locale.
 
 ## Money
