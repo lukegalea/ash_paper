@@ -53,4 +53,77 @@ defmodule AshPaper.Clause do
       do: {:ok, %{key: clause.key, text: Enum.join(parts)}},
       else: {:error, {:unfilled_holes, clause.key, missing}}
   end
+
+  @doc """
+  The clause a host stored: a map with `key`, `locale`, `version` and `runs` (atom or string
+  keys, or a struct holding them), each run `%{"kind" => "text" | "hole", "value" => string}` as
+  JSON keeps it. A string locale must name an existing atom. `{:error, reason}` names the first
+  part that is not a clause's.
+  """
+  @spec from_stored(map()) :: {:ok, t()} | {:error, {:invalid, atom()}}
+  def from_stored(stored) when is_map(stored) do
+    with {:ok, key} <- part(stored, :key, &(is_binary(&1) and &1 != "")),
+         {:ok, locale} <- stored_locale(part_value(stored, :locale)),
+         {:ok, version} <- part(stored, :version, &(is_integer(&1) and &1 > 0)),
+         {:ok, runs} <- part(stored, :runs, &valid_runs?/1) do
+      {:ok, %__MODULE__{key: key, locale: locale, version: version, runs: Enum.map(runs, &run/1)}}
+    end
+  end
+
+  @doc "As `from_stored/1`, raising `ArgumentError` on a map that is not a stored clause."
+  @spec from_stored!(map()) :: t()
+  def from_stored!(stored) do
+    case from_stored(stored) do
+      {:ok, clause} -> clause
+      {:error, reason} -> raise ArgumentError, "not a stored clause (#{inspect(reason)})"
+    end
+  end
+
+  @doc """
+  Whether `runs` is a list of stored runs: each a map whose `kind` is `"text"` or `"hole"` and
+  whose `value` is a string, with string or atom keys (and a kind as a string or an atom).
+  """
+  @spec valid_runs?(term()) :: boolean()
+  def valid_runs?(runs) when is_list(runs), do: Enum.all?(runs, &match?({_, _}, run(&1)))
+  def valid_runs?(_runs), do: false
+
+  defp run(stored) when is_map(stored) do
+    case {run_kind(part_value(stored, :kind)), part_value(stored, :value)} do
+      {kind, value} when kind in [:text, :hole] and is_binary(value) -> {kind, value}
+      _malformed -> :error
+    end
+  end
+
+  defp run(_stored), do: :error
+
+  defp run_kind(kind) when kind in [:text, :hole], do: kind
+  defp run_kind("text"), do: :text
+  defp run_kind("hole"), do: :hole
+  defp run_kind(_other), do: nil
+
+  defp part(stored, name, valid?) do
+    value = part_value(stored, name)
+    if valid?.(value), do: {:ok, value}, else: {:error, {:invalid, name}}
+  end
+
+  defp part_value(stored, name) do
+    case Map.fetch(stored, name) do
+      {:ok, value} -> value
+      :error -> Map.get(stored, Atom.to_string(name))
+    end
+  end
+
+  defp stored_locale(locale) when is_atom(locale) and locale not in [nil, true, false],
+    do: {:ok, locale}
+
+  defp stored_locale(locale) when is_binary(locale) do
+    case stored_locale(String.to_existing_atom(locale)) do
+      {:ok, atom} -> {:ok, atom}
+      {:error, _} -> {:error, {:invalid, :locale}}
+    end
+  rescue
+    ArgumentError -> {:error, {:invalid, :locale}}
+  end
+
+  defp stored_locale(_locale), do: {:error, {:invalid, :locale}}
 end

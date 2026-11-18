@@ -26,12 +26,28 @@ defmodule AshPaper.Render do
       :document_id
     ]
     defstruct @enforce_keys
+
+    @typedoc """
+    `bytes` are the issued PDF and `digest` their SHA-256. `marks` are where each labelled
+    block landed (what `AshPaper.Verify` reads). `pins` are what the render is only
+    reproducible within (`AshPaper.Render.pins/1`).
+    """
+    @type t :: %__MODULE__{
+            bytes: binary(),
+            digest: String.t(),
+            page_count: pos_integer(),
+            marks: [map()],
+            pins: map(),
+            layout_hash: String.t(),
+            theme_hash: String.t(),
+            document_id: String.t()
+          }
   end
 
   @marks_file "paper-marks.json"
 
   @spec render(module() | Layout.t(), Theme.t(), Payload.t(), [map()], keyword()) ::
-          {:ok, %Rendered{}} | {:error, term()}
+          {:ok, Rendered.t()} | {:error, term()}
   def render(layout, %Theme{} = theme, %Payload{} = payload, clauses, opts) do
     with {:ok, limits} <- limits(opts) do
       layout = Layout.of(layout)
