@@ -185,4 +185,93 @@ defmodule AshPaper.Payload do
       clauses: clauses
     }
   end
+
+  @document_parts [
+    :title,
+    :locale,
+    :fields,
+    :field_order,
+    :labels,
+    :tables,
+    :table_order,
+    :columns
+  ]
+
+  @doc """
+  The payload back from what `document/2` produced and the payload's `facts`: the inverse a
+  host needs to re-render a document it stored. The document's top-level keys may be atoms or
+  strings, so a document stored as JSON reads back as well as one held in memory; a string
+  locale must name an existing atom. `schema` supplies what the document does not carry (its
+  key and version). The document's clauses are not part of the payload: read them with
+  `document_clauses/1`.
+
+  `{:error, {:incomplete, parts}}` names every part the document lacks.
+  """
+  @spec from_document(map(), map(), module()) ::
+          {:ok, t()} | {:error, {:incomplete, [atom()]} | {:unknown_locale, term()}}
+  def from_document(document, facts, schema) when is_map(document) and is_map(facts) do
+    parts = for part <- @document_parts, into: %{}, do: {part, document_part(document, part)}
+
+    case for {part, :error} <- parts, do: part do
+      [] ->
+        with {:ok, locale} <- stored_locale(elem(parts.locale, 1)) do
+          values = for {part, {:ok, value}} <- parts, into: %{}, do: {part, value}
+
+          {:ok,
+           struct!(
+             __MODULE__,
+             Map.merge(values, %{
+               locale: locale,
+               schema_key: Schema.key(schema),
+               schema_version: Schema.version(schema),
+               facts: facts
+             })
+           )}
+        end
+
+      missing ->
+        {:error, {:incomplete, Enum.filter(@document_parts, &(&1 in missing))}}
+    end
+  end
+
+  @doc """
+  The resolved clauses a document carries, as `AshPaper.Verify.read_back/5` and
+  `AshPaper.Render.render/5` take them (`%{key:, text:}`), from a document whose keys are atoms
+  or strings. A document without clauses carries none.
+  """
+  @spec document_clauses(map()) :: [%{key: String.t(), text: String.t()}]
+  def document_clauses(document) when is_map(document) do
+    case document_part(document, :clauses) do
+      {:ok, clauses} when is_list(clauses) ->
+        Enum.map(clauses, &%{key: stored(&1, :key), text: stored(&1, :text)})
+
+      _none ->
+        []
+    end
+  end
+
+  defp document_part(document, part) do
+    with :error <- Map.fetch(document, part), do: Map.fetch(document, Atom.to_string(part))
+  end
+
+  defp stored(map, key) do
+    case document_part(map, key) do
+      {:ok, value} -> value
+      :error -> nil
+    end
+  end
+
+  defp stored_locale(locale) when is_atom(locale) and locale not in [nil, true, false],
+    do: {:ok, locale}
+
+  defp stored_locale(locale) when is_binary(locale) do
+    case stored_locale(String.to_existing_atom(locale)) do
+      {:ok, atom} -> {:ok, atom}
+      {:error, _} -> {:error, {:unknown_locale, locale}}
+    end
+  rescue
+    ArgumentError -> {:error, {:unknown_locale, locale}}
+  end
+
+  defp stored_locale(locale), do: {:error, {:unknown_locale, locale}}
 end

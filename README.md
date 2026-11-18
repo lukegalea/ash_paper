@@ -34,11 +34,21 @@ fails the render.
 
 After rendering, the PDF is read back and each labelled block is checked against the payload. Each block comes
 out `:passed`, `:failed` or `:unmeasured`. The reader handles only Type0 fonts and refuses form XObjects.
+`AshPaper.Verify.blocks/3` returns the text of each block as the read-back reads it, so two renders can be compared
+block by block.
+
+## Storing a render and coming back to it
+
+A host stores `Payload.document/2` and the payload's `facts`; `Payload.from_document/3` rebuilds the payload from
+them (atom or string keys), and `Payload.document_clauses/1` the clauses. `Snapshot.stored/1` is the snapshot as a
+JSON column keeps it, `Snapshot.pinned/2` reads a pin (the theme's, say) back out, and `Snapshot.payload_hash/2`
+recomputes the keyed payload hash it embeds. `Clause.from_stored/1` reads a clause stored as JSON.
 
 ## Run fragment and AshPlanning
 
 `AshPaper.Fragment.Run` is a run fragment holding what a render used and produced. `AshPaper.Binding` gives the
-selection shape an AshPlanning binding needs.
+selection shape an AshPlanning binding needs, and `AshPaper.Binding.check/4` says whether a stored selection still
+pins the schema, layout and theme the code declares.
 
 ## Locking
 
