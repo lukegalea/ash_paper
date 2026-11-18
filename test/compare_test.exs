@@ -12,6 +12,13 @@ defmodule AshPaper.CompareTest do
 
   defp revised(text), do: %{Visits.scope() | version: 2, runs: [{:text, text}]}
 
+  defp recorded_samples do
+    [
+      Map.put(Visits.baseline(Visits.payload("North yard")), :id, "north-yard"),
+      Map.put(Visits.baseline(Visits.payload("East gate", 6)), :id, "east-gate")
+    ]
+  end
+
   defp compare(baseline, candidate, opts \\ []),
     do: Compare.compare(baseline, candidate, @limits ++ opts)
 
@@ -52,9 +59,11 @@ defmodule AshPaper.CompareTest do
                compare(%{baseline | blocks: stored}, [])
     end
 
-    test "a baseline with nothing recorded is compared, and says so" do
+    test "a baseline with nothing recorded is compared only when allowed, and says so" do
       baseline = Visits.baseline(Visits.payload(), :none)
-      assert {:ok, %{outcome: :unchanged, baseline: :unrecorded}} = compare(baseline, [])
+
+      assert {:ok, %{outcome: :unchanged, baseline: :unrecorded}} =
+               compare(baseline, [], allow_unrecorded: true)
     end
 
     test "a theme that only changes colour changes no block" do
@@ -181,6 +190,19 @@ defmodule AshPaper.CompareTest do
                compare(%{baseline | blocks: tampered}, [])
     end
 
+    test "a baseline with nothing recorded is refused by default" do
+      baseline = Visits.baseline(Visits.payload(), :none)
+
+      assert {:error, {:missing_inputs, [:recorded]}} = compare(baseline, [])
+      assert {:error, {:missing_inputs, [:recorded]}} = compare(baseline, layout: Letter)
+
+      assert {:error, {:missing_inputs, [:recorded]}} =
+               compare(baseline, [], allow_unrecorded: false)
+
+      assert {:error, {:invalid_inputs, [:allow_unrecorded]}} =
+               compare(baseline, [], allow_unrecorded: :yes)
+    end
+
     test "unreproducible wins over a candidate that would fail" do
       baseline = %{Visits.baseline() | digest: String.duplicate("0", 64)}
 
@@ -226,24 +248,87 @@ defmodule AshPaper.CompareTest do
 
   describe "a report over many samples" do
     test "counts every outcome and says when the cap cut the sample" do
-      samples = Visits.samples()
+      samples = recorded_samples()
 
       assert {:ok, report} = Compare.report(samples, [layout: Letter], [cap: 1] ++ @limits)
 
       assert report.sample == %{taken: 1, cap: 1, truncated: true}
-      assert report.counts == %{changed: 0, unchanged: 1, unreproducible: 0, failed: 0}
-      assert [%{id: "north-yard", outcome: :unchanged}] = report.cases
+
+      assert report.counts == %{
+               changed: 0,
+               unchanged: 1,
+               unrecorded: 0,
+               unreproducible: 0,
+               failed: 0
+             }
+
+      assert [%{id: "north-yard", outcome: :unchanged, baseline: :reproduced}] = report.cases
 
       assert {:ok, %{sample: %{taken: 2, truncated: false}}} =
                Compare.report(samples, [layout: Letter], @limits)
     end
 
+    test "unrecorded samples are refused by default, each a failed case" do
+      assert {:ok, report} = Compare.report(Visits.samples(), [layout: Letter], @limits)
+
+      assert report.counts == %{
+               changed: 0,
+               unchanged: 0,
+               unrecorded: 0,
+               unreproducible: 0,
+               failed: 2
+             }
+
+      assert Enum.all?(
+               report.cases,
+               &(&1.reason == {:invalid_sample, {:missing_inputs, [:recorded]}})
+             )
+    end
+
+    test "allowed, unrecorded samples get their own count, never unchanged or changed" do
+      samples = Visits.samples() ++ recorded_samples()
+      opts = [allow_unrecorded: true] ++ @limits
+
+      assert {:ok, same} = Compare.report(samples, [layout: Letter], opts)
+
+      assert same.counts == %{
+               changed: 0,
+               unchanged: 2,
+               unrecorded: 2,
+               unreproducible: 0,
+               failed: 0
+             }
+
+      candidate = [clause: %{key: "scope", text: "Checks made on site."}]
+      assert {:ok, swapped} = Compare.report(samples, candidate, opts)
+
+      assert swapped.counts == %{
+               changed: 2,
+               unchanged: 0,
+               unrecorded: 2,
+               unreproducible: 0,
+               failed: 0
+             }
+
+      assert Enum.count(swapped.cases, &(&1.baseline == :unrecorded)) == 2
+
+      assert {:ok, failing} = Compare.report(samples, [layout: LetterWithoutClauses], opts)
+      assert failing.counts.failed == 4
+      assert failing.counts.unrecorded == 0
+    end
+
     test "a sample that cannot be compared is a failed case, not a crash" do
-      samples = [%{id: "broken", payload: Visits.payload()} | Visits.samples()]
+      samples = [%{id: "broken", payload: Visits.payload()} | recorded_samples()]
 
       assert {:ok, report} = Compare.report(samples, [layout: LetterWithoutClauses], @limits)
 
-      assert report.counts == %{changed: 0, unchanged: 0, unreproducible: 0, failed: 3}
+      assert report.counts == %{
+               changed: 0,
+               unchanged: 0,
+               unrecorded: 0,
+               unreproducible: 0,
+               failed: 3
+             }
 
       assert %{reason: {:invalid_sample, {:missing_inputs, [:layout, :theme]}}} =
                Enum.find(report.cases, &(&1.id == "broken"))
@@ -258,11 +343,14 @@ defmodule AshPaper.CompareTest do
 
       assert {:error, :limits_required} = Compare.report([], [], [])
       assert {:error, {:invalid_inputs, [:samples]}} = Compare.report(:none, [], @limits)
+
+      assert {:error, {:invalid_inputs, [:allow_unrecorded]}} =
+               Compare.report([], [], [allow_unrecorded: 1] ++ @limits)
     end
 
     test "a clause swap over samples changes that block in each" do
       candidate = [clause: %Clause{revised("Checks made on site.") | version: 3}]
-      assert {:ok, report} = Compare.report(Visits.samples(), candidate, @limits)
+      assert {:ok, report} = Compare.report(recorded_samples(), candidate, @limits)
 
       assert report.counts.changed == 2
       assert report.collateral == 0

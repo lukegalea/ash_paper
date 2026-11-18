@@ -12,8 +12,13 @@ defmodule AshPaper.Compare do
   again first. It must reproduce everything recorded (the digest, the digest of the bytes, the
   text and page of every block), or the outcome is `:unreproducible` and nothing is compared:
   a document that cannot be reproduced is never `:unchanged`, so every `:changed` is the
-  candidate's doing. A baseline that records none of them is compared without that control,
-  and the result says so (`baseline: :unrecorded`).
+  candidate's doing.
+
+  A baseline that records none of them cannot be checked, so by default it is refused:
+  `{:error, {:missing_inputs, [:recorded]}}`. Fixtures, which have no recording, opt in with
+  `allow_unrecorded: true`: the baseline is then compared without that control and the result
+  says so (`baseline: :unrecorded`). `report/3` counts such cases as `unrecorded`, never as
+  `unchanged` or `changed`.
 
   ## The candidate
 
@@ -75,8 +80,8 @@ defmodule AshPaper.Compare do
 
   @typedoc """
   One comparison. `reason` is set when the outcome is `:unreproducible` or `:failed`.
-  `baseline` is `:reproduced` or `:unrecorded` once the baseline control passed, nil when it
-  did not. `pages` is the page count before and after, nil when nothing was compared.
+  `baseline` is `:reproduced` once the baseline control passed, `:unrecorded` when there was
+  nothing recorded to check (only with `allow_unrecorded: true`), nil when it did not pass. `pages` is the page count before and after, nil when nothing was compared.
   """
   @type result :: %{
           outcome: outcome(),
@@ -89,18 +94,21 @@ defmodule AshPaper.Compare do
         }
 
   @typedoc """
-  Many comparisons of one candidate: `counts` per outcome (all four always present),
-  `collateral` the number of cases with any, `cases` each result with the sample's `id`, and
-  `sample` how many were taken under the cap and whether the cap cut them.
+  Many comparisons of one candidate. `counts` has every key, zero-filled: `changed` and
+  `unchanged` count only cases whose recorded baseline was reproduced; `unrecorded` counts the
+  cases compared without a recorded baseline (`allow_unrecorded: true`), whatever they showed;
+  `unreproducible` and `failed` count the rest. `collateral` is the number of cases with any,
+  `cases` each result with the sample's `id`, and `sample` how many were taken under the cap
+  and whether the cap cut them.
   """
   @type report :: %{
-          counts: %{outcome() => non_neg_integer()},
+          counts: %{(outcome() | :unrecorded) => non_neg_integer()},
           collateral: non_neg_integer(),
           cases: [map()],
           sample: %{taken: non_neg_integer(), cap: pos_integer(), truncated: boolean()}
         }
 
-  @outcomes [:changed, :unchanged, :unreproducible, :failed]
+  @counts [:changed, :unchanged, :unrecorded, :unreproducible, :failed]
   @required [:layout, :theme, :payload]
   @candidate_keys [:layout, :theme, :clauses, :clause]
   @default_cap 50
@@ -109,20 +117,23 @@ defmodule AshPaper.Compare do
   Compares `baseline` with `candidate`. `opts` are the render options
   (`AshPaper.Render.render/5`: `max_pages:` and `timeout_ms:` are required), plus `expect:`,
   the block ids the candidate is expected to touch (or `:all`), when the derived ones will not
-  do.
+  do, and `allow_unrecorded: true` to compare a baseline that records nothing.
 
-  `{:error, {:missing_inputs, keys}}`, `{:error, {:invalid_inputs, keys}}`,
+  `{:error, {:missing_inputs, [:recorded]}}` for a baseline that records no digest, bytes or
+  read-back (unless `allow_unrecorded: true`); `{:error, {:missing_inputs, keys}}`, `{:error, {:invalid_inputs, keys}}`,
   `{:error, {:invalid_candidate, keys}}` or `{:error, :limits_required}` when the arguments
   cannot be compared.
   """
   @spec compare(map() | keyword(), candidate(), keyword()) :: {:ok, result()} | {:error, term()}
   def compare(baseline, candidate, opts) do
-    {expect, render_opts} = Keyword.pop(opts, :expect)
+    {expect, opts} = Keyword.pop(opts, :expect)
+    {allow_unrecorded, render_opts} = Keyword.pop(opts, :allow_unrecorded, false)
 
     with {:ok, inputs, record} <- baseline(baseline),
          :ok <- limits(render_opts),
          {:ok, candidate} <- candidate(candidate),
-         :ok <- expect(expect) do
+         :ok <- expect(expect),
+         :ok <- recorded(record, allow_unrecorded) do
       {:ok, run(inputs, record, candidate, expect, render_opts)}
     end
   end
@@ -131,7 +142,9 @@ defmodule AshPaper.Compare do
   Compares each of `samples` (baselines, each optionally with an `:id`) with `candidate`,
   taking at most `cap:` of them (default #{@default_cap}); the report says when the cap cut the
   sample. `opts` are otherwise `compare/3`'s. A sample whose inputs cannot be compared is a
-  `:failed` case with the reason `{:invalid_sample, reason}`.
+  `:failed` case with the reason `{:invalid_sample, reason}`: by default that includes a sample
+  that records nothing (`{:missing_inputs, [:recorded]}`). With `allow_unrecorded: true` such a
+  sample is compared and counted as `unrecorded`, whatever it showed.
 
   `{:error, reason}` when the candidate, the limits or the cap cannot be used for any sample.
   """
@@ -139,17 +152,19 @@ defmodule AshPaper.Compare do
   def report(samples, candidate, opts) when is_list(samples) do
     {cap, opts} = Keyword.pop(opts, :cap, @default_cap)
     {expect, render_opts} = Keyword.pop(opts, :expect)
+    {allow_unrecorded, render_opts} = Keyword.pop(render_opts, :allow_unrecorded, false)
 
     with :ok <- cap(cap),
          :ok <- limits(render_opts),
          {:ok, _candidate} <- candidate(candidate),
-         :ok <- expect(expect) do
+         :ok <- expect(expect),
+         :ok <- allow_unrecorded(allow_unrecorded) do
       taken = Enum.take(samples, cap)
       cases = taken |> Enum.with_index() |> Enum.map(&measure(&1, candidate, opts))
 
       {:ok,
        %{
-         counts: Enum.reduce(cases, Map.new(@outcomes, &{&1, 0}), &count/2),
+         counts: Enum.reduce(cases, Map.new(@counts, &{&1, 0}), &count/2),
          collateral: Enum.count(cases, &(&1.collateral != [])),
          cases: cases,
          sample: %{taken: length(taken), cap: cap, truncated: length(samples) > cap}
@@ -175,6 +190,11 @@ defmodule AshPaper.Compare do
   defp sample_id(sample, index) when is_map(sample), do: Map.get(sample, :id, index)
   defp sample_id(sample, index) when is_list(sample), do: Keyword.get(sample, :id, index)
   defp sample_id(_sample, index), do: index
+
+  # A case compared without a recorded baseline is never counted as changed or unchanged.
+  defp count(%{baseline: :unrecorded, outcome: outcome}, counts)
+       when outcome in [:changed, :unchanged],
+       do: Map.update!(counts, :unrecorded, &(&1 + 1))
 
   defp count(result, counts), do: Map.update!(counts, result.outcome, &(&1 + 1))
 
@@ -241,6 +261,17 @@ defmodule AshPaper.Compare do
         {:error, :limits_required}
     end
   end
+
+  defp recorded(record, allow_unrecorded) do
+    with :ok <- allow_unrecorded(allow_unrecorded) do
+      if record.digest || record.blocks || allow_unrecorded,
+        do: :ok,
+        else: {:error, {:missing_inputs, [:recorded]}}
+    end
+  end
+
+  defp allow_unrecorded(value) when is_boolean(value), do: :ok
+  defp allow_unrecorded(_value), do: {:error, {:invalid_inputs, [:allow_unrecorded]}}
 
   defp expect(nil), do: :ok
   defp expect(:all), do: :ok

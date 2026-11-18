@@ -49,7 +49,9 @@ recomputes the keyed payload hash it embeds. `Clause.from_stored/1` reads a clau
 `AshPaper.Compare.compare/3` re-renders a recorded render as it was and as a candidate would have it (another
 layout, theme or clauses, or one clause swapped) and compares the two block by block. The baseline must reproduce
 what was recorded of it (its digest, its bytes or its block read-back) or the outcome is `:unreproducible`, never
-`:unchanged`; a candidate that does not render or read back is `:failed`. A change outside what the candidate was
+`:unchanged`. A baseline that records none of them is refused unless the caller passes `allow_unrecorded: true`;
+the result is then marked `baseline: :unrecorded`, and `report/3` counts it as `unrecorded`, never as `unchanged`.
+A candidate that does not render or read back is `:failed`. A change outside what the candidate was
 expected to touch (another block, the page count, the page furniture) is flagged as collateral.
 
 ```elixir
@@ -63,7 +65,9 @@ AshPaper.Compare.compare(
 
 `mix paper.impact --layout <module> [--cap N]` runs it over the samples a host names with
 `config :ash_paper, :impact_samples, MyApp.Paper.Samples` (an `AshPaper.Compare.Samples`), prints the report, and
-exits non-zero when any sample fails: the reviewer's diff for a layout change. It never touches a database.
+exits non-zero when any sample fails: the reviewer's diff for a layout change. Fixture samples record no digest, so
+the task compares them with `allow_unrecorded: true` and prints that their baseline was not recorded. It never
+touches a database.
 
 ## Run fragment and AshPlanning
 

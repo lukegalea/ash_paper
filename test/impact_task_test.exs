@@ -25,9 +25,13 @@ defmodule Mix.Tasks.Paper.ImpactTest do
     output = run(["--layout", "AshPaper.Test.Letter"])
 
     assert output =~ "paper.impact: layout letter v1"
-    assert output =~ "unchanged  north-yard  (no recorded baseline)"
-    assert output =~ "unchanged  east-gate"
-    assert output =~ "changed 0, unchanged 2, unreproducible 0, failed 0; 0 with collateral"
+    assert output =~ "unchanged  north-yard  (baseline not recorded: not checked to reproduce)"
+    assert output =~ "unchanged  east-gate  (baseline not recorded"
+
+    assert output =~
+             "changed 0, unchanged 0, unrecorded 2, unreproducible 0, failed 0; 0 with collateral"
+
+    assert output =~ "2 sample(s) had no recorded baseline"
     assert output =~ "2 sample(s) compared (cap 50)"
   end
 

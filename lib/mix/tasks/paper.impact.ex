@@ -10,6 +10,11 @@ defmodule Mix.Tasks.Paper.Impact do
   with their text before and after, and any collateral (page count, page furniture), then the
   counts and whether `--cap` (default #{AshPaper.Compare.default_cap()}) cut the sample.
 
+  Samples are fixtures and usually record no digest, so the task compares them with
+  `allow_unrecorded: true`: each such sample is marked as not recorded, and is counted as
+  `unrecorded`, never as changed or unchanged. A sample that records its digest, bytes or
+  read-back is checked to reproduce it first.
+
   It never touches a database: it starts only the kernel and its dependencies. It exits
   non-zero when any sample failed (did not render, or did not read back) or could not be
   reproduced.
@@ -37,7 +42,9 @@ defmodule Mix.Tasks.Paper.Impact do
     samples = samples!()
     cap = opts[:cap] || Compare.default_cap()
 
-    case Compare.report(samples.samples(), [layout: layout], [cap: cap] ++ samples.limits()) do
+    opts = [cap: cap, allow_unrecorded: true] ++ samples.limits()
+
+    case Compare.report(samples.samples(), [layout: layout], opts) do
       {:ok, report} ->
         Mix.shell().info(format(layout, report))
         finish(report)
@@ -112,7 +119,7 @@ defmodule Mix.Tasks.Paper.Impact do
     ] ++ [""]
   end
 
-  defp baseline(:unrecorded), do: "  (no recorded baseline)"
+  defp baseline(:unrecorded), do: "  (baseline not recorded: not checked to reproduce)"
   defp baseline(_reproduced_or_nil), do: ""
 
   defp details(%{outcome: outcome, reason: reason}) when outcome in [:failed, :unreproducible],
@@ -138,17 +145,32 @@ defmodule Mix.Tasks.Paper.Impact do
   defp counts(report) do
     tally =
       Enum.map_join(
-        ~w(changed unchanged unreproducible failed)a,
+        ~w(changed unchanged unrecorded unreproducible failed)a,
         ", ",
         &"#{&1} #{report.counts[&1]}"
       )
 
     sample = report.sample
 
+    unrecorded =
+      case Enum.count(report.cases, &(&1.baseline == :unrecorded)) do
+        0 ->
+          []
+
+        n ->
+          [
+            "#{n} sample(s) had no recorded baseline: compared without checking that it " <>
+              "reproduces, so none is counted as changed or unchanged"
+          ]
+      end
+
     [
-      tally <> "; #{report.collateral} with collateral",
-      "#{sample.taken} sample(s) compared (cap #{sample.cap})" <>
-        if(sample.truncated, do: "; the cap cut the sample", else: "")
-    ]
+      tally <> "; #{report.collateral} with collateral"
+      | unrecorded
+    ] ++
+      [
+        "#{sample.taken} sample(s) compared (cap #{sample.cap})" <>
+          if(sample.truncated, do: "; the cap cut the sample", else: "")
+      ]
   end
 end
