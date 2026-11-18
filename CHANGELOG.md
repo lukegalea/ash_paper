@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- `AshPaper.Compare`: what a change would do to a document already rendered. `compare/3`
+  re-renders a recorded render as it was (it must reproduce its recorded digest, bytes or block
+  read-back, or the outcome is `:unreproducible`, never `:unchanged`) and as a candidate would
+  have it (another layout, theme or clauses, or one clause swapped), and compares the two block by
+  block: `:changed` with each block's text and page before and after, `:unchanged`, or `:failed`
+  when the candidate does not render or read back. Changes beyond what the candidate was expected
+  to touch (other blocks, the page count, the page furniture) are flagged as collateral.
+  `report/3` runs it over many samples under a cap and says when the cap cut them. Additive.
+- `mix paper.impact --layout <module> [--cap N]`: the reviewer's diff for a layout change, over
+  the samples a host names with `config :ash_paper, :impact_samples, MyApp.Paper.Samples` (an
+  `AshPaper.Compare.Samples`). Never touches a database; exits non-zero when any sample fails or
+  cannot be reproduced.
 - What a host needs to store a render and come back to it, so hosts stop re-deriving it. All
   additive: no existing function's output changes, and existing snapshot digests are unchanged.
   - `AshPaper.Render.Rendered.t()`.
