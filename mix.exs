@@ -26,7 +26,8 @@ defmodule AshPaper.MixProject do
        github: "lukegalea/ash_open_lineage", ref: "c35de0bccf39cc2c64db89729736344f1d51462b"},
       {:ex_money, "~> 6.2"},
       {:jason, "~> 1.4"},
-      {:stream_data, "~> 1.1"}
+      {:stream_data, "~> 1.1"},
+      {:ash_cloak, "~> 0.4", only: :test}
     ]
   end
 end

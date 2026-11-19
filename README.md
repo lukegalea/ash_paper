@@ -71,7 +71,11 @@ touches a database.
 
 ## Run fragment and AshPlanning
 
-`AshPaper.Fragment.Run` is a run fragment holding what a render used and produced. `AshPaper.Binding` gives the
+`AshPaper.Fragment.Run` is a run fragment holding what a render used and produced: the snapshot, digest, payload and
+facts, the payload hash key, the stored bytes' id and why each clause is in the document. `record_render` takes the
+key and the clause reasons as inputs or from `context: %{paper: ...}`, so a host that seals `payload` and `facts`
+seals the key beside them. `AshPaper.Fragment.Run.problem/1` turns any render, read-back or issue error into a map
+the run can store. `AshPaper.Binding` gives the
 selection shape an AshPlanning binding needs, and `AshPaper.Binding.check/4` says whether a stored selection still
 pins the schema, layout and theme the code declares.
 
