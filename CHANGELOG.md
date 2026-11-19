@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **Contract change: `AshPaper.Fragment.Run` carries the render record's last three fields and
+  turns errors into problems.** The fragment now declares `payload_hash_key` (nullable sensitive
+  string), `document_version_id` (nullable uuid, no relationship) and `clause_reasons` (array of
+  maps, not null, default `[]`), and `record_render` accepts all three. `payload_hash_key` and
+  `clause_reasons` may instead ride the action's `context` option
+  (`context: %{paper: %{payload_hash_key: key, clause_reasons: reasons}}`,
+  `AshPaper.Fragment.FromContext`); an input wins, and only `record_render` takes them, so the key
+  is written once. Because the key is now an accepted input, a host that cloaks it beside
+  `payload` and `facts` receives it as a sensitive argument and seals it with its own sealer, with
+  no extra change. `AshPaper.Fragment.Run.problem/1` maps render, read-back, clause-selection and
+  requirement error terms to a JSON-storable map with a `"kind"`; an unknown term is a
+  `"render_error"` (or its tuple tag), never a raise. Rendered bytes and digests are unchanged.
+
+  Adopting: a host that declared any of these on its own run resource deletes them when it takes
+  this version, or the resource fails to compile with a duplicate attribute:
+  - its `payload_hash_key`, `document_version_id` and `clause_reasons` attribute declarations;
+  - the change that sealed the key from `context: %{paper: %{payload_hash_key: ...}}` (keep
+    `payload_hash_key` in the cloak list and in the sealer's fields), and the change that copied
+    `clause_reasons` from the same context. Callers that pass that context keep working unchanged;
+  - its own error-to-problem mapping, in favour of `AshPaper.Fragment.Run.problem/1`.
+
+  Declarations equal to the fragment's leave the schema as it is (`mix ash.codegen --check` stays
+  clean). A host that lacked a field gets one additive column: a nullable `document_version_id`,
+  or `clause_reasons` with default `[]`. No data changes.
 - `AshPaper.Compare`: what a change would do to a document already rendered. `compare/3`
   re-renders a recorded render as it was (it must reproduce its recorded digest, bytes or block
   read-back, or the outcome is `:unreproducible`, never `:unchanged`) and as a candidate would

@@ -167,3 +167,71 @@ defmodule AshPaper.Test.Build do
     )
   end
 end
+
+defmodule AshPaper.Test.Vault do
+  @moduledoc false
+  # A stand-in for a host's vault: reversible, and never the plaintext.
+  import Bitwise
+
+  def encrypt!(plaintext), do: "sealed:" <> flip(plaintext)
+  def decrypt!("sealed:" <> sealed), do: flip(sealed)
+
+  defp flip(binary), do: for(<<byte <- binary>>, into: <<>>, do: <<bxor(byte, 0x5A)>>)
+end
+
+defmodule AshPaper.Test.Seal do
+  @moduledoc false
+  # A host's own sealer, declared as a global change the way hosts declare theirs: it seals a
+  # cloaked argument into `encrypted_<field>` and removes the argument, so the encrypt hook
+  # finds nothing left to do.
+  use Ash.Resource.Change
+
+  @impl true
+  def change(changeset, opts, _context) do
+    Enum.reduce(opts[:fields], changeset, fn field, changeset ->
+      case Ash.Changeset.fetch_argument(changeset, field) do
+        {:ok, value} when is_binary(value) ->
+          changeset
+          |> Ash.Changeset.force_change_attribute(:"encrypted_#{field}", sealed(value))
+          |> Ash.Changeset.delete_argument(field)
+          |> Ash.Changeset.put_context(:sealed_by_host, true)
+
+        _absent ->
+          changeset
+      end
+    end)
+  end
+
+  @impl true
+  def atomic(changeset, opts, _context) do
+    atomics =
+      for field <- opts[:fields],
+          {:ok, value} when is_binary(value) <- [Ash.Changeset.fetch_argument(changeset, field)],
+          into: %{},
+          do: {:"encrypted_#{field}", sealed(value)}
+
+    if atomics == %{}, do: {:ok, changeset}, else: {:atomic, atomics}
+  end
+
+  defp sealed(value),
+    do: value |> :erlang.term_to_binary() |> AshPaper.Test.Vault.encrypt!() |> Base.encode64()
+end
+
+defmodule AshPaper.Test.SealedRun do
+  @moduledoc false
+  use Ash.Resource,
+    domain: AshPaper.Test.Domain,
+    data_layer: Ash.DataLayer.Ets,
+    extensions: [AshCloak],
+    fragments: [AshPaper.Fragment.Run]
+
+  cloak do
+    vault(AshPaper.Test.Vault)
+    attributes([:payload, :facts, :payload_hash_key])
+    encrypt_nil?(false)
+  end
+
+  changes do
+    change {AshPaper.Test.Seal, fields: [:payload_hash_key]}, on: [:create, :update]
+  end
+end
